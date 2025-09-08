@@ -1,0 +1,17 @@
+# Core scientific stack
+numpy
+opencv-python
+Pillow
+
+# Deep learning frameworks
+torch
+torchvision
+
+# Caching
+redis
+
+# Optional vision models (local alternatives to API)
+ultralytics        # YOLOv8 for object detection
+easyocr            # OCR (alternative: paddleocr, pytesseract)
+transformers       # BLIP / LLaVA models (if you run locally)
+sentencepiece      # tokenizer dependency for some Hugging Face models
