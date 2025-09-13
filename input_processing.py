@@ -1,7 +1,9 @@
 """
 Input processing and multi-level caching system for the Vision-Language Agent.
 """
-
+# At the top of your files:
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import cv2
 import logging
 import numpy as np

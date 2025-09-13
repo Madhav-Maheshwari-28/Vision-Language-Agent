@@ -1,7 +1,9 @@
 """
 Core data structures for the Vision-Language Agent system.
 """
-
+# At the top of your files:
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import hashlib
 import json
 import uuid

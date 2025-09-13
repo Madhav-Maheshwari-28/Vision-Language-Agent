@@ -57,6 +57,13 @@ class VisionLanguageAgent:
             logger.info("Performing initial vision analysis...")
             initial_features = self.vision_router.initial_analysis(processed_input)
             
+            # DEBUG: Check what we got
+            logger.info(f"DEBUG: initial_features type: {type(initial_features)}")
+            logger.info(f"DEBUG: initial_features keys: {list(initial_features.keys()) if hasattr(initial_features, 'keys') else 'No keys'}")
+            
+            for key, value in initial_features.items():
+                logger.info(f"DEBUG: {key} = {type(value)} -> {value}")
+            
             # Step 4: Multi-step reasoning
             logger.info("Starting reasoning process...")
             response, reasoning_chain = self.reasoning_engine.reason(
@@ -86,7 +93,7 @@ class VisionLanguageAgent:
                 'response': response,
                 'reasoning_chain': [asdict(step) for step in reasoning_chain],
                 'processing_time': processing_time,
-                'visual_features': {k: asdict(v) for k, v in initial_features.items()},
+                'visual_features': {k: asdict(v) if hasattr(v, '__dict__') else v for k, v in initial_features.items()},
                 'success': True
             }
             
@@ -96,6 +103,9 @@ class VisionLanguageAgent:
             processing_time = time.time() - start_time
             
             logger.error(f"Error processing query: {e}")
+            logger.error(f"Error type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             
             return {
                 'session_id': session_id,

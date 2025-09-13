@@ -2,7 +2,9 @@
 Memory management and reasoning engine for the Vision-Language Agent.
 Updated to use OpenAI API for LLM reasoning.
 """
-
+# At the top of your files:
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import json
 import logging
 import sqlite3
@@ -13,9 +15,12 @@ from typing import Dict, List, Optional, Tuple, Any
 
 from data_structures import ConversationTurn, ReasoningStep, VisionQuery, VisionResult
 from vision_models import VisionQueryRouter
-# from dotenv import load_dotenv
-
+from dotenv import load_dotenv
+from openai import OpenAI
+import os
 # load_dotenv(override=True)
+load_dotenv()
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 logger = logging.getLogger(__name__)
 
 
@@ -144,7 +149,19 @@ class MemoryManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        reasoning_json = json.dumps([asdict(step) for step in turn.reasoning_chain])
+        # Convert reasoning chain to JSON-serializable format
+        reasoning_data = []
+        for step in turn.reasoning_chain:
+            step_dict = asdict(step)
+            
+            # Convert any datetime objects to ISO format strings
+            for key, value in step_dict.items():
+                if hasattr(value, 'isoformat'):  # Check if it's a datetime-like object
+                    step_dict[key] = value.isoformat()
+            
+            reasoning_data.append(step_dict)
+        
+        reasoning_json = json.dumps(reasoning_data)
         
         cursor.execute('''
             INSERT OR REPLACE INTO conversations
@@ -182,7 +199,7 @@ class LLMReasoningEngine:
     """Multi-step reasoning engine with OpenAI API integration"""
     
     def __init__(self, vision_router: VisionQueryRouter, max_reasoning_steps: int = 8, 
-                 OPENAI_API_KEY: str = None, model: str = "gpt-4"):
+                 OPENAI_API_KEY: str = None, model: str = "gpt-4o"):
         self.vision_router = vision_router
         self.max_reasoning_steps = max_reasoning_steps
         
@@ -278,7 +295,8 @@ class LLMReasoningEngine:
                        temperature: float = None) -> str:
         """Make API call to OpenAI"""
         try:
-            response = openai.ChatCompletion.create(
+            client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            response = client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -298,27 +316,101 @@ class LLMReasoningEngine:
             # Fallback to basic response
             return f"Analysis step completed. (API Error: {str(e)})"
     
-    def generate_initial_analysis(self, question: str, visual_features: Dict[str, VisionResult]) -> ReasoningStep:
+    # def generate_initial_analysis(self, question: str, visual_features: Dict[str, VisionResult]) -> ReasoningStep:
+    #     """Generate initial reasoning step from visual features using OpenAI"""
+        
+    #     # Extract key information from visual features
+    #     objects = visual_features.get('detect_objects', VisionResult('', {}, 0, 0)).result.get('objects', [])
+    #     text = visual_features.get('read_text', VisionResult('', {}, 0, 0)).result.get('full_text', '')
+    #     scene = visual_features.get('describe_scene', VisionResult('', {}, 0, 0)).result.get('description', '')
+        
+    #     # Prepare user prompt
+    #     user_prompt = """
+    #     I need to analyze an image to answer this question: "{}"
+        
+    #     Here's what I can see in the image:
+        
+    #     Objects detected: {[obj.get('class', 'unknown') for obj in objects]}
+    #     Text found: "{}"
+    #     Scene description: "{}"
+        
+    #     Please provide an initial analysis that helps answer the user's question. 
+    #     Focus on the most relevant visual elements and explain how they relate to the question.
+    #     """.format(question,text,scene)
+        
+    #     # Call OpenAI API
+    #     reasoning = self.call_openai_api(
+    #         self.system_prompts['initial_analysis'], 
+    #         user_prompt
+    #     )
+        
+    #     evidence = [
+    #         f"Objects detected: {[obj.get('class', 'unknown') for obj in objects]}",
+    #         f"Text found: {text}",
+    #         f"Scene description: {scene}"
+    #     ]
+        
+    #     return ReasoningStep(
+    #         step_number=1,
+    #         reasoning=reasoning,
+    #         evidence=evidence,
+    #         vision_queries=[],
+    #         confidence=0.8
+    #     )
+    def generate_initial_analysis(self, question: str, visual_features: Dict[str, Any]) -> ReasoningStep:
         """Generate initial reasoning step from visual features using OpenAI"""
         
-        # Extract key information from visual features
-        objects = visual_features.get('detect_objects', VisionResult('', {}, 0, 0)).result.get('objects', [])
-        text = visual_features.get('read_text', VisionResult('', {}, 0, 0)).result.get('full_text', '')
-        scene = visual_features.get('describe_scene', VisionResult('', {}, 0, 0)).result.get('description', '')
+        # FIXED: Handle both VisionResult objects and direct dictionary results
+        objects = []
+        text = ""
+        scene = ""
+        
+        # Extract object detection results
+        obj_data = visual_features.get('detect_objects')
+        if obj_data:
+            if hasattr(obj_data, 'result'):  # VisionResult object
+                objects = obj_data.result.get('objects', [])
+            elif isinstance(obj_data, dict):  # Direct dictionary
+                objects = obj_data.get('objects', [])
+        
+        # Extract text results
+        text_data = visual_features.get('read_text')
+        if text_data:
+            if hasattr(text_data, 'result'):  # VisionResult object
+                text = text_data.result.get('full_text', '')
+            elif isinstance(text_data, dict):  # Direct dictionary
+                text = text_data.get('full_text', '')
+        
+        # Extract scene description
+        scene_data = visual_features.get('describe_scene')
+        if scene_data:
+            if hasattr(scene_data, 'result'):  # VisionResult object
+                scene = scene_data.result.get('description', '')
+            elif isinstance(scene_data, dict):  # Direct dictionary
+                scene = scene_data.get('description', '')
+        
+        # Prepare object list safely
+        object_classes = []
+        if objects:
+            for obj in objects:
+                if isinstance(obj, dict):
+                    object_classes.append(obj.get('class', 'unknown'))
+                else:
+                    object_classes.append(str(obj))
         
         # Prepare user prompt
         user_prompt = f"""
-        I need to analyze an image to answer this question: "{question}"
-        
-        Here's what I can see in the image:
-        
-        Objects detected: {[obj.get('class', 'unknown') for obj in objects]}
-        Text found: "{text}"
-        Scene description: "{scene}"
-        
-        Please provide an initial analysis that helps answer the user's question. 
-        Focus on the most relevant visual elements and explain how they relate to the question.
-        """
+    I need to analyze an image to answer this question: "{question}"
+
+    Here's what I can see in the image:
+
+    Objects detected: {object_classes}
+    Text found: "{text}"
+    Scene description: "{scene}"
+
+    Please provide an initial analysis that helps answer the user's question. 
+    Focus on the most relevant visual elements and explain how they relate to the question.
+    """
         
         # Call OpenAI API
         reasoning = self.call_openai_api(
@@ -327,7 +419,7 @@ class LLMReasoningEngine:
         )
         
         evidence = [
-            f"Objects detected: {[obj.get('class', 'unknown') for obj in objects]}",
+            f"Objects detected: {object_classes}",
             f"Text found: {text}",
             f"Scene description: {scene}"
         ]
@@ -339,9 +431,8 @@ class LLMReasoningEngine:
             vision_queries=[],
             confidence=0.8
         )
-    
     def generate_reasoning_step(self, question: str, reasoning_chain: List[ReasoningStep], 
-                              context: Dict[str, Any], step_number: int) -> ReasoningStep:
+                          context: Dict[str, Any], step_number: int) -> ReasoningStep:
         """Generate next step in reasoning chain using OpenAI"""
         
         # Prepare context from previous reasoning
@@ -354,6 +445,9 @@ class LLMReasoningEngine:
         for step in reasoning_chain:
             current_evidence.extend(step.evidence)
         
+        # Fix: Create evidence string outside f-string
+        evidence_text = "\n".join(current_evidence)
+        
         user_prompt = f"""
         I'm working on answering this question: "{question}"
         
@@ -361,7 +455,7 @@ class LLMReasoningEngine:
         {previous_reasoning}
         
         Available evidence:
-        {chr(10).join(current_evidence)}
+        {evidence_text}
         
         What should be my next step in reasoning? Build logically on what I've established so far.
         If I need more visual information, specify what type of analysis would help.
@@ -379,6 +473,7 @@ class LLMReasoningEngine:
             vision_queries=[],
             confidence=0.75
         )
+
     
     def needs_more_vision_info(self, step: ReasoningStep, question: str) -> bool:
         """Determine if additional vision queries are needed using OpenAI"""
@@ -401,18 +496,18 @@ class LLMReasoningEngine:
     def generate_vision_queries(self, step: ReasoningStep, question: str) -> List[VisionQuery]:
         """Generate additional vision queries based on reasoning needs using OpenAI"""
         
-        user_prompt = f"""
-        Question: "{question}"
-        Current reasoning: "{step.reasoning}"
-        
-        What specific visual analysis do I need? Choose from:
-        - detect_objects (with parameters like confidence_threshold, include_positions)
-        - read_text (with parameters like languages)  
-        - describe_scene (with parameters like detail_level: basic/medium/detailed, focus area)
-        
-        Provide your response as a JSON list of queries with this format:
-        [{"query_type": "detect_objects", "params": {"confidence_threshold": 0.3}}]
-        """
+        user_prompt = (
+            f'Question: "{question}"\n'
+            f'Current reasoning: "{step.reasoning}"\n'
+            '\n'
+            'What specific visual analysis do I need? Choose from:\n'
+            '- detect_objects (with parameters like confidence_threshold, include_positions)\n'
+            '- read_text (with parameters like languages)\n'  
+            '- describe_scene (with parameters like detail_level: basic/medium/detailed, focus area)\n'
+            '\n'
+            'Provide your response as a JSON list of queries with this format:\n'
+            '[{"query_type": "detect_objects", "params": {"confidence_threshold": 0.3}}]'
+        )
         
         response = self.call_openai_api(
             self.system_prompts['vision_query_generation'], 
@@ -540,6 +635,9 @@ class LLMReasoningEngine:
         for step in reasoning_chain:
             all_evidence.extend(step.evidence)
         
+        # Fix: Create evidence string outside f-string
+        evidence_text = "\n".join(all_evidence)
+        
         user_prompt = f"""
         Original question: "{question}"
         
@@ -547,7 +645,7 @@ class LLMReasoningEngine:
         {reasoning_summary}
         
         Supporting evidence:
-        {chr(10).join(all_evidence)}
+        {evidence_text}
         
         Please provide a clear, direct answer to the original question based on this analysis.
         Reference the key visual evidence that supports your conclusion.

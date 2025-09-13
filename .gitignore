@@ -34,3 +34,9 @@ htmlcov/
 # Project-specific ignores
 demo_api.py
 scene_caption_test.py
+
+# Databases
+*.db
+
+# Model files (PyTorch, TensorFlow, etc.)
+*.pt
